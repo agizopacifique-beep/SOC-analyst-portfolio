@@ -1,78 +1,57 @@
 # Network Analysis
 
-> Packet capture, protocol analysis, and network-based threat detection. This folder contains PCAP analysis reports, Wireshark investigation notes, and Snort/Suricata detection rules written and tested in my home lab.
->
-> ---
->
-> ## Core Concept: Why Packet Analysis Matters
->
-> Network logs tell you that a connection happened. Packet captures tell you exactly what was transferred. The difference is critical for:
->
-> - **Data exfiltration cases** — logs show a connection to an FTP server. The PCAP shows the actual file contents that were stolen.
-> - - **Compliance violations** — logs show FTP was used. The PCAP proves cardholder data crossed the wire in cleartext, triggering PCI DSS notification requirements.
->   - - **Malware C2 traffic** — logs show an outbound TCP connection. The PCAP shows the command-and-control protocol being used.
->    
->     - ---
->
-> ## Tools Used
->
-> | Tool | Purpose | How I Used It |
-> |---|---|---|
-> | **tcpdump** | Command-line live packet capture | Captured FTP exfiltration traffic to a .pcap file during Lab 5 |
-> | **Wireshark** | Graphical PCAP analysis and protocol dissection | Opened captures, applied display filters, followed TCP streams |
-> | **Zeek** | Automatic structured log generation from network traffic | Read conn.log for connection duration and bytes transferred |
-> | **Suricata** | Real-time network IDS with signature-based alerting | Fired automatic alerts during nmap scans and FTP transfers |
-> | **Snort** | Rule-based IDS | Wrote custom Snort rules and tested them against .pcap files |
->
-> ---
->
-> ## Files in This Folder
->
-> | File | Lab | Description |
-> |---|---|---|
-> | `wireshark-pcap-analysis.md` | Lab 5 | FTP data exfiltration analysis — Wireshark TCP stream showing stolen PII in plaintext |
-> | `snort-rules.md` | Lab 5 | Custom Snort rules written and tested against the Lab 5 PCAP capture |
-> | `pcap-files/` | Lab 5 | The actual .pcap capture file from the FTP exfiltration |
-> | `screenshots/` | Lab 5 | Evidence screenshots from Wireshark, tcpdump, and Security Onion |
->
-> ---
->
-> ## Key Analysis Technique: Wireshark Display Filters
->
-> Display filters narrow a full PCAP down to only the traffic relevant to the investigation:
->
-> | Filter | What It Shows | When to Use |
-> |---|---|---|
-> | `ftp` | FTP command channel — login credentials, file commands | Find the FTP session and stolen filename |
-> | `ftp-data` | FTP data channel — actual file contents being transferred | Read the stolen data |
-> | `tcp.port == 4444` | All traffic on port 4444 | Investigate Meterpreter C2 connections |
-> | `http` | All HTTP traffic | Investigate web-based C2 or data exfiltration |
-> | `dns` | All DNS queries | Detect DNS tunneling or unusual domain lookups |
-> | `ip.addr == 192.168.56.30` | All traffic to or from Kali | Scope investigation to attacker traffic |
->
-> ### How to Follow a TCP Stream
-> Right-click any packet → **Follow** → **TCP Stream**
->
-> This reassembles the full conversation between client and server and displays it in human-readable text. For FTP data transfers, this shows the complete file contents — exactly as they appeared on the wire with no decryption needed.
->
-> ---
->
-> ## Lab 5 Key Finding
->
-> The Wireshark TCP Stream analysis of the FTP exfiltration proved:
->
-> 1. FTP transmits file contents with **zero encryption**
-> 2. 2. An attacker or insider with network access could read the stolen data in real time
->    3. 3. The stolen file contained SSN and credit card numbers — both protected under **PCI DSS** and **GLBA**
->       4. 4. Using FTP for any data containing cardholder information is a direct compliance violation
->         
->          5. ---
->         
->          6. ## MITRE ATT&CK Coverage
->         
->          7. | Tactic | Technique | ID |
-> |---|---|---|
-> | Exfiltration | Exfiltration Over Alternative Protocol | T1048 |
-> | Exfiltration | Exfiltration Over Unencrypted Non-C2 Protocol | T1048.003 |
-> | Discovery | Network Service Discovery | T1046 |
-> | Command and Control | Non-Application Layer Protocol | T1095 |
+There's a difference between knowing that a data transfer happened and being able to prove what was transferred. Security Onion can tell you a connection was made to port 21. Wireshark can show you the file that went across it, word for word.
+
+Lab 5 is where that difference became concrete for me.
+
+---
+
+## Lab 5 — FTP Exfiltration PCAP Analysis
+
+The setup: I created a file called `sensitive.txt` on the Windows 10 VM containing a fake SSN, a fake credit card number, and a name. Then I transferred it to Kali over FTP while tcpdump was capturing everything on port 21.
+
+Watching it happen from the Kali side — pyftpdlib showing the connection come in, the file upload completing — you already know what happened. The interesting part is what Wireshark shows you afterward.
+
+Opening the capture file and applying the `ftp` display filter, I could see the login sequence in plaintext: `USER anonymous`, then `PASS` blank, then `STOR sensitive.txt`. The filename of the stolen file is right there in the packet.
+
+Switching to `ftp-data` and following the TCP stream is where it gets uncomfortable fast. The entire contents of the file — SSN, card number, name — are sitting there in the stream window in plain text. No decryption tool, no cracking anything. Just Wireshark and an unencrypted protocol doing what unencrypted protocols do.
+
+That's the whole compliance story in one screenshot. This is why PCI DSS explicitly prohibits FTP for cardholder data.
+
+**Report:** `wireshark-pcap-analysis.md`
+
+---
+
+## Wireshark Filters I Used
+
+These are the actual filters from the investigation, not a generic list:
+
+| Filter | What It Found |
+|---|---|
+| `ftp` | Login sequence — USER, PASS, STOR commands all in plaintext |
+| `ftp-data` | The actual file transfer packets |
+| `ip.addr == 192.168.56.30` | Isolated all traffic involving Kali |
+| `tcp.port == 21` | Everything on the FTP port |
+
+The Follow TCP Stream step is what ties it together. Right-click any `ftp-data` packet → Follow → TCP Stream, and you're reading the file as it crossed the wire.
+
+---
+
+## Files in This Folder
+
+| File | Description |
+|---|---|
+| `wireshark-pcap-analysis.md` | Full analysis notes from the Lab 5 PCAP investigation |
+| `screenshots/` | tcpdump running, Wireshark ftp filter, and the TCP stream showing file contents |
+
+---
+
+## Tools Used
+
+| Tool | What I Used It For |
+|---|---|
+| tcpdump | Captured the FTP traffic to a .pcap file while the transfer was happening |
+| Wireshark | Analyzed the capture — applied filters, followed the TCP stream |
+| Zeek (via Security Onion) | conn.log showed the connection duration and total bytes transferred |
+| Suricata | Fired an ET POLICY FTP alert — caught the unencrypted transfer automatically |
+| pyftpdlib | Ran the FTP server on Kali that received the stolen file |
