@@ -1,63 +1,59 @@
 # Detection Engineering
 
-> Writing detection logic — not just using it. This folder contains custom detection rules I authored, tested, and documented in my home lab.
->
-> ---
->
-> ## What Detection Engineering Is
->
-> Detection engineering is the practice of building the rules that make SIEMs and EDR tools fire alerts. Most Tier 1 analysts only consume alerts. Detection engineers create them. Writing your own rules requires you to deeply understand the attacker technique — you cannot write a rule for behavior you do not understand.
->
-> ---
->
-> ## Rules in This Folder
->
-> ### 1. Custom Wazuh Rule — Brute Force Detection (Rule ID 100001)
-> **File:** `wazuh-rule-100001.xml`
->
-> **What it detects:** Password brute force attacks — specifically when the same Windows account receives more than 10 failed login attempts (Event ID 4625) within a 60-second window.
->
-> **How I built it:** I ran Hydra from Kali against my Windows 10 VM to generate real Event ID 4625 entries. I then wrote this rule in the Wazuh local rules file on Security Onion and confirmed it fired on the 10th attempt.
->
-> **Why it matters:** This is a frequency-based threshold rule. It does not rely on a known attack signature — it detects the behavior pattern regardless of which tool the attacker uses.
->
-> | Field | Value | Purpose |
-> |---|---|---|
-> | `rule id` | 100001 | Unique identifier for this custom rule |
-> | `if_matched_sid` | 18152 | Base rule to count (one fire per Event 4625) |
-> | `frequency` | 10 | Number of base rule triggers needed |
-> | `timeframe` | 60 | Counting window in seconds |
-> | `same_field` | targetUserName | All 10 failures must target the same account |
-> | `level` | 12 | Severity (12 = high priority alert) |
-> | `mitre id` | T1110 | MITRE ATT&CK: Brute Force |
->
-> ---
->
-> ### 2. Sigma Rule — PsExec Lateral Movement
-> **File:** `sigma-rules/psexec-lateral-movement.yml`
->
-> **What it detects:** Lateral movement via PsExec by matching Event ID 7045 with ServiceName = PSEXESVC. PsExec always installs this service on the target machine, making it a reliable indicator.
->
-> **How I built it:** I ran psexec.py from Kali against Windows 10 and confirmed Event 7045 fires with ServiceName: PSEXESVC. I then wrote this Sigma rule and used sigma-cli to convert it to Splunk SPL automatically.
->
-> **Why Sigma specifically:** Sigma is a vendor-neutral rule format. One rule converts to Splunk SPL, Elastic KQL, QRadar AQL, or any other SIEM. Writing in Sigma means the rule works in any enterprise environment, not just my lab.
->
-> | Field | Value |
-> |---|---|
-> | MITRE Technique | T1021.002 — Remote Services: SMB/Windows Admin Shares |
-> | Log Source | Windows Security Event Log |
-> | Detection Field | EventID: 7045, ServiceName: PSEXESVC |
-> | Severity | High |
-> | False Positive Rate | Low — legitimate admins occasionally use PsExec |
->
-> ---
->
-> ## Tools Used
->
-> | Tool | Purpose |
-> |---|---|
-> | Wazuh Rule Engine | Hosts and evaluates custom XML detection rules |
-> | Security Onion | Displays rule alerts in the Alerts tab |
-> | Sigma (YAML format) | Universal detection rule language |
-> | sigma-cli | Converts Sigma rules to SIEM-specific query syntax |
-> | Splunk SPL | Receives converted Sigma rule as a saved alert |
+Most people learning SOC work focus on consuming alerts. I wanted to understand how those alerts get built in the first place. So instead of just running labs and looking at what fired, I started writing the rules myself.
+
+This folder has two rules I wrote and tested against real traffic I generated in my own lab.
+
+---
+
+## Rule 1 — Wazuh Brute Force Rule (Rule ID 100001)
+
+**File:** `wazuh-rule-100001.xml`
+
+The scenario: Hydra is running from Kali, hammering the Windows 10 SMB service with passwords from rockyou.txt. Hundreds of Event ID 4625 (failed logon) entries are flooding into Security Onion every minute. The question is: at what point does Security Onion know this is a brute force attack and not just a user who forgot their password?
+
+That's what this rule decides.
+
+It watches Wazuh's base rule 18152 — which fires once per Event 4625 — and counts how many times it fires against the same target account within a 60-second window. When it hits 10, the rule fires as a Level 12 (high severity) alert.
+
+The `same_field` parameter is the detail that matters most here. Without it, 10 different users each failing once would trigger the rule. With it, the rule only fires when one specific account is being hammered. That's the difference between a detection rule and a false positive machine.
+
+| Field | Value | Why It Matters |
+|---|---|---|
+| `rule id` | 100001 | Custom rule space starts at 100000 in Wazuh |
+| `if_matched_sid` | 18152 | Count fires of this base rule, not raw events |
+| `frequency` | 10 | Threshold — 10 failures triggers the alert |
+| `timeframe` | 60 | Counting window in seconds |
+| `same_field` | targetUserName | Only count failures against the same account |
+| `level` | 12 | High severity — shows up prominently in Security Onion |
+
+I tested it by running Hydra for about 3 minutes against administrator, watching the alert fire on attempt 10, and confirming the timing in the logs. The rule fired exactly when it should.
+
+---
+
+## Rule 2 — Sigma Rule for PsExec Lateral Movement
+
+**File:** `sigma-rules/psexec-lateral-movement.yml`
+
+After running Lab 4 and watching Event 7045 fire with ServiceName: PSEXESVC, I wanted to capture that detection in a format that could run anywhere — not just in my specific Wazuh setup.
+
+Sigma is essentially a universal language for detection rules. You write it once, then use sigma-cli to convert it to whatever SIEM syntax you need. The rule I wrote looks for Event ID 7045 with ServiceName matching PSEXESVC. That combination is essentially unique to PsExec — no other common tool installs a service with that name.
+
+One thing worth noting: this rule will also fire for legitimate sysadmins using PsExec. I included that in the `falsepositives` section because any detection rule without documented false positives is incomplete. In a real environment you'd layer this with the source IP — if it's coming from a known admin workstation at 2pm on a Tuesday, that's different from an unknown IP at 3am.
+
+| Field | What It Does |
+|---|---|
+| `logsource` | Windows Security event log |
+| `detection.selection` | EventID 7045 AND ServiceName PSEXESVC |
+| `level` | High |
+| `tags` | attack.lateral_movement, attack.t1021.002 |
+| `falsepositives` | Legitimate IT admins using PsExec for remote management |
+
+---
+
+## Tools Used
+
+- Wazuh rule engine — where the XML rule lives and runs
+- - Security Onion Alerts tab — where I confirmed the rule fired
+  - - sigma-cli — converted the Sigma YAML to Splunk SPL automatically
+    - - Splunk — saved the converted query as a detection alert
