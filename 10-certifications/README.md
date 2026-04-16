@@ -10,8 +10,7 @@
 > - **Status:** Active
 > - - **Issued by:** CompTIA
 >   - - **Covers:** Network security, threat intelligence, incident response, cryptography, identity and access management, risk management
->     - - **Relevance to SOC work:** CompTIA Security+ is the most widely recognized baseline certification for SOC analyst roles. It validates the foundational knowledge required to understand security alerts, apply frameworks, and communicate with the wider security team.
->      
+>  
 >       - ---
 >
 > ## In Progress
